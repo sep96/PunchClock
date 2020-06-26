@@ -30,17 +30,19 @@ namespace PunchClock
         {
             string MachineName1 = Environment.MachineName;
             string userName = System.Security.Principal.WindowsIdentity.GetCurrent().Name.Split('\\')[1];
-            GetLastLoginToMachine(MachineName1, userName);
-            ExportToExcel();
-            DateTime WorkStart = DateTime.Now;
-            //startupMaker();
-            var handle = GetConsoleWindow();
-            ListenForMouseEvents();
-            // Hide
-            ShowWindow(handle, SW_HIDE);
-            _hookID = SetHook(_proc);
+            // GetLastLoginToMachine(MachineName1, userName);
+
+            //ExportToExcel();
+            //DateTime WorkStart = DateTime.Now;
+            ////startupMaker();
+            //var handle = GetConsoleWindow();
+            //ListenForMouseEvents();
+            //// Hide
+            //ShowWindow(handle, SW_HIDE);
+            //_hookID = SetHook(_proc);
             Application.Run();
-            UnhookWindowsHookEx(_hookID);
+            //UnhookWindowsHookEx(_hookID);
+            UpTime();
         }
         private static void startupMaker()
         {
@@ -106,6 +108,9 @@ namespace PunchClock
                 //StreamWriter sw = new StreamWriter(Application.StartupPath + @"\log.txt", true);
                 //sw.Write((Keys)vkCode+"-");
                 //sw.Close();
+                var ticks = Stopwatch.GetTimestamp();
+                var uptime = ((double)ticks) / Stopwatch.Frequency;
+                var uptimeSpan = TimeSpan.FromSeconds(uptime);
                 if ((DateTime.Now - strikeStartMouse).Minutes>15) {
                     for (var i = 0; (DateTime.Now - strikeStartKeyboard).Minutes / 15 > i; i++)
                     {
@@ -143,10 +148,54 @@ namespace PunchClock
         const int SW_HIDE = 0;
         public static DateTime? GetLastLoginToMachine(string machineName, string userName)
         {
-            PrincipalContext c = new PrincipalContext(ContextType.Machine, machineName);
-            UserPrincipal uc = UserPrincipal.FindByIdentity(c, userName);
-            return uc.LastLogon;
+            EventLog myLog = new EventLog();
+            myLog.Log = "System";
+            myLog.Source = "User32";
 
+            var lastEntry = myLog;
+            EventLogEntry sw;
+            for (var i = myLog.Entries.Count -1 ; i >1; i--)
+            {
+                if (lastEntry.Entries[i].InstanceId == 1074)
+                {
+                    sw = lastEntry.Entries[i];
+                    break;
+                }
+            }
+           // var last_error_Message = lastEntry.Message;
+
+            //for (int index = myLog.Entries.Count - 1; index > 0; index--)
+            //{
+            //    var errLastEntry = myLog.Entries[index];
+            //    if (errLastEntry.EntryType == EventLogEntryType.Error)
+            //    {
+            //        //this is the last entry with Error
+            //        var appName = errLastEntry.Source;
+            //        break;
+            //    }
+            //}
+            return null;
+
+        }
+        public static DateTime GetLastSystemShutdown()
+        {
+            string sKey = @"System\CurrentControlSet\Control\Windows";
+            Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(sKey);
+
+            string sValueName = "ShutdownTime";
+            byte[] val = (byte[])key.GetValue(sValueName);
+            long valueAsLong = BitConverter.ToInt64(val, 0);
+            var ss =  DateTime.FromFileTime(valueAsLong);
+            return ss;
+        }
+        public static TimeSpan UpTime()
+        {
+                using (var uptime = new PerformanceCounter("System", "System Up Time"))
+                {
+                    uptime.NextValue();       //Call this an extra time before reading its value
+                    return TimeSpan.FromSeconds(uptime.NextValue());
+                }
+            
         }
         protected static void ExportToExcel()
         {
