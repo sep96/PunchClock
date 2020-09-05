@@ -12,6 +12,7 @@ using System.ServiceProcess;
 using Microsoft.Win32;
 using Gma.System.MouseKeyHook;
 using System.Data;
+using System.Data.SqlClient;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace PunchClock
@@ -25,21 +26,33 @@ namespace PunchClock
         private static IntPtr _hookID = IntPtr.Zero;
         private static DateTime strikeStartKeyboard;
         private static DateTime strikeStartMouse;
+        private static DateTime WorkStart;
         private static long strikeCount = 0;
+        private static readonly string connectionString = "Data Source=.;Initial Catalog=PC;Integrated Security=True";
+        private static string userName = "";
         static void Main(string[] args)
         {
             string MachineName1 = Environment.MachineName;
-            string userName = System.Security.Principal.WindowsIdentity.GetCurrent().Name.Split('\\')[1];
-            // GetLastLoginToMachine(MachineName1, userName);
-
-            //ExportToExcel();
-            //DateTime WorkStart = DateTime.Now;
+            userName = System.Security.Principal.WindowsIdentity.GetCurrent().Name.Split('\\')[1];
+            GetLastLoginToMachine(MachineName1, userName);
+            WorkStart = DateTime.Now;
+            var firstDayOfMonth = new DateTime(WorkStart.Year, WorkStart.Month, 1);
+            var lastDayOfMonth = firstDayOfMonth.AddMonths(1).AddDays(-1);
+            if (lastDayOfMonth.Day == WorkStart.Day)
+            {
+                ExportMonth();
+            }
+            if (5 == WorkStart.Day)
+            {
+                ExportMonth();
+            }
+            strikeStartKeyboard = DateTime.Now;
             ////startupMaker();
-            //var handle = GetConsoleWindow();
-            //ListenForMouseEvents();
+            var handle = GetConsoleWindow();
+            ListenForMouseEvents();
             //// Hide
-            //ShowWindow(handle, SW_HIDE);
-            //_hookID = SetHook(_proc);
+            ShowWindow(handle, SW_HIDE);
+            _hookID = SetHook(_proc);
             Application.Run();
             //UnhookWindowsHookEx(_hookID);
             UpTime();
@@ -64,6 +77,7 @@ namespace PunchClock
                     {
                         for (var i = 0; (DateTime.Now - strikeStartMouse).Minutes / 15 > i; i++)
                         {
+                            
                             strikeCount++;
                         }
                     }
@@ -103,21 +117,32 @@ namespace PunchClock
         {
             if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
             {
-                //int vkCode = Marshal.ReadInt32(lParam);
-                //Console.WriteLine((Keys)vkCode);
-                //StreamWriter sw = new StreamWriter(Application.StartupPath + @"\log.txt", true);
-                //sw.Write((Keys)vkCode+"-");
-                //sw.Close();
                 var ticks = Stopwatch.GetTimestamp();
                 var uptime = ((double)ticks) / Stopwatch.Frequency;
                 var uptimeSpan = TimeSpan.FromSeconds(uptime);
-                if ((DateTime.Now - strikeStartMouse).Minutes>15) {
-                    for (var i = 0; (DateTime.Now - strikeStartKeyboard).Minutes / 15 > i; i++)
+                var diffrenceTime = (DateTime.Now - strikeStartKeyboard).Minutes / 1;
+                //if ((DateTime.Now - strikeStartMouse).Minutes>15) {
+                    for (var i = 0; diffrenceTime > i; i++)
                     {
-                        strikeCount++;
+                        string query = " insert into  [PC].[dbo].[TimeRecorder] ([username],[Gap] ,[Date],[Start]) VALUES (@user , @time , @date , @start)";
+                        using (SqlConnection conn = new SqlConnection(connectionString))
+                        {
+                            conn.Open();
+                            using(SqlCommand comm = new SqlCommand(query, conn))
+                            {
+                                comm.Parameters.AddWithValue("@user", userName);
+                                comm.Parameters.AddWithValue("@time", "15");
+                                comm.Parameters.AddWithValue("@date", DateTime.Now);
+                                comm.Parameters.AddWithValue("@start", WorkStart);
+                                comm.ExecuteNonQuery();
+                            }
+                            conn.Close();
+                        }
                     }
-                }
+              //  }
             }
+
+            strikeStartKeyboard = DateTime.Now;
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
         //These Dll's will handle the hooks. Yaaar mateys!
@@ -148,35 +173,26 @@ namespace PunchClock
         const int SW_HIDE = 0;
         public static DateTime? GetLastLoginToMachine(string machineName, string userName)
         {
-            EventLog myLog = new EventLog();
-            myLog.Log = "System";
-            myLog.Source = "User32";
-
-            var lastEntry = myLog;
-            EventLogEntry sw;
-            for (var i = myLog.Entries.Count -1 ; i >1; i--)
+            string sKey = @"System\CurrentControlSet\Control\Windows";
+            Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(sKey);
+            string sValueName = "ShutdownTime";
+            byte[] val = (byte[])key.GetValue(sValueName);
+            long valueAsLong = BitConverter.ToInt64(val, 0);
+            var result = DateTime.FromFileTime(valueAsLong);
+            string query = " update  [PC].[dbo].[TimeRecorder] set [EndTime]=CONVERT(datetime,@end)  where CONVERT(DATE,[Start])=CONVERT(DATE,@end)";
+            using (SqlConnection conn = new SqlConnection(connectionString))
             {
-                if (lastEntry.Entries[i].InstanceId == 1074)
+                conn.Open();
+                using (SqlCommand comm = new SqlCommand(query, conn))
                 {
-                    sw = lastEntry.Entries[i];
-                    break;
+                    comm.Parameters.AddWithValue("@end", result);
+                    comm.ExecuteNonQuery();
                 }
+                conn.Close();
             }
-           // var last_error_Message = lastEntry.Message;
-
-            //for (int index = myLog.Entries.Count - 1; index > 0; index--)
-            //{
-            //    var errLastEntry = myLog.Entries[index];
-            //    if (errLastEntry.EntryType == EventLogEntryType.Error)
-            //    {
-            //        //this is the last entry with Error
-            //        var appName = errLastEntry.Source;
-            //        break;
-            //    }
-            //}
-            return null;
-
+            return result;
         }
+
         public static DateTime GetLastSystemShutdown()
         {
             string sKey = @"System\CurrentControlSet\Control\Windows";
@@ -196,6 +212,33 @@ namespace PunchClock
                     return TimeSpan.FromSeconds(uptime.NextValue());
                 }
             
+        }
+        private static void ExportMonth()
+        {
+            string query = "SELECT[username]  , sum ([Gap]) " +
+                           "FROM [PC].[dbo].[TimeRecorder] where MONTH([Date]) = @month and YEAR([Date]) = @year and [username]=@user " +
+                           " group by [username];";
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            {
+                conn.Open();
+                using (SqlCommand comm = new SqlCommand(query, conn))
+                {
+                    comm.Parameters.AddWithValue("@month", DateTime.Now.Month);
+                    comm.Parameters.AddWithValue("@year", DateTime.Now.Year);
+                    comm.Parameters.AddWithValue("@user", userName);
+                    using (SqlDataReader reader = comm.ExecuteReader())
+                    {
+                        if (reader.Read())
+                        {
+                            StreamWriter sw = new StreamWriter(Application.StartupPath + @"\"+userName+"-" +DateTime.Now.Year + DateTime.Now.Month + ".txt", true);
+                            sw.Write(reader.GetString(0) + "-" + reader.GetInt32(1));
+                            sw.Close();
+                            strikeCount++;
+                        }
+                    }
+                }
+                conn.Close();
+            }
         }
         protected static void ExportToExcel()
         {
