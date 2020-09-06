@@ -14,6 +14,7 @@ using Gma.System.MouseKeyHook;
 using System.Data;
 using System.Data.SqlClient;
 using Excel = Microsoft.Office.Interop.Excel;
+using System.Drawing;
 
 namespace PunchClock
 {
@@ -24,14 +25,53 @@ namespace PunchClock
         private const int WM_KEYDOWN = 0x0100;
         private static LowLevelKeyboardProc _proc = HookCallback;
         private static IntPtr _hookID = IntPtr.Zero;
+        private static IntPtr _hookID_ = IntPtr.Zero;
+        private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+        private const int WH_MOUSE_LL = 14;
+        private static LowLevelMouseProc _proc_ = HookCallback;
         private static DateTime strikeStartKeyboard;
         private static DateTime strikeStartMouse;
         private static DateTime WorkStart;
         private static long strikeCount = 0;
         private static readonly string connectionString = "Data Source=.;Initial Catalog=PC;Integrated Security=True";
         private static string userName = "";
+        const int SW_HIDE = 0;
+
+
+
+        private enum MouseMessages
+        {
+            WM_LBUTTONDOWN = 0x0201,
+            WM_LBUTTONUP = 0x0202,
+            WM_MOUSEMOVE = 0x0200,
+            WM_MOUSEWHEEL = 0x020A,
+            WM_RBUTTONDOWN = 0x0204,
+            WM_RBUTTONUP = 0x0205
+        }
+
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int x;
+            public int y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MSLLHOOKSTRUCT
+        {
+            public POINT pt;
+            public uint mouseData;
+            public uint flags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+
         static void Main(string[] args)
         {
+          
+
             string MachineName1 = Environment.MachineName;
             userName = System.Security.Principal.WindowsIdentity.GetCurrent().Name.Split('\\')[1];
             GetLastLoginToMachine(MachineName1, userName);
@@ -42,21 +82,21 @@ namespace PunchClock
             {
                 ExportMonth();
             }
-            if (5 == WorkStart.Day)
-            {
-                ExportMonth();
-            }
             strikeStartKeyboard = DateTime.Now;
-            ////startupMaker();
+            startupMaker();
             var handle = GetConsoleWindow();
             ListenForMouseEvents();
-            //// Hide
+            // Hide
             ShowWindow(handle, SW_HIDE);
             _hookID = SetHook(_proc);
+            _hookID_ = SetHook(_proc_);
+
             Application.Run();
-            //UnhookWindowsHookEx(_hookID);
+            UnhookWindowsHookEx(_hookID);
+            UnhookWindowsHookEx(_hookID_);
             UpTime();
         }
+
         private static void startupMaker()
         {
             RegistryKey re = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", true);
@@ -64,6 +104,7 @@ namespace PunchClock
             re.SetValue("ConsoleApp2", System.Windows.Forms.Application.ExecutablePath.ToString());
 
         }
+
         public static void ListenForMouseEvents()
         {
             Console.WriteLine("Listening to mouse clicks.");
@@ -100,6 +141,7 @@ namespace PunchClock
                 catch (Exception ss) { }
             };
         }
+
         private static IntPtr SetHook(LowLevelKeyboardProc proc)
         {
             using (Process curProcess = Process.GetCurrentProcess())
@@ -109,19 +151,27 @@ namespace PunchClock
                 GetModuleHandle(curModule.ModuleName), 0);
             }
         }
-        private delegate IntPtr LowLevelKeyboardProc(
-        int nCode, IntPtr wParam, IntPtr lParam);
 
-        private static IntPtr HookCallback(
-            int nCode, IntPtr wParam, IntPtr lParam)
+        private static IntPtr SetHook(LowLevelMouseProc proc)
         {
-            if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
+            using (Process curProcess = Process.GetCurrentProcess())
+            using (ProcessModule curModule = curProcess.MainModule)
             {
+                return SetWindowsHookEx(WH_MOUSE_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+            }
+        }
+
+        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || MouseMessages.WM_MOUSEMOVE == (MouseMessages)wParam))
+            {
+                //MSLLHOOKSTRUCT hookStruct = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
                 var ticks = Stopwatch.GetTimestamp();
                 var uptime = ((double)ticks) / Stopwatch.Frequency;
                 var uptimeSpan = TimeSpan.FromSeconds(uptime);
                 var diffrenceTime = (DateTime.Now - strikeStartKeyboard).Minutes / 1;
-                //if ((DateTime.Now - strikeStartMouse).Minutes>15) {
                     for (var i = 0; diffrenceTime > i; i++)
                     {
                         string query = " insert into  [PC].[dbo].[TimeRecorder] ([username],[Gap] ,[Date],[Start]) VALUES (@user , @time , @date , @start)";
@@ -139,9 +189,7 @@ namespace PunchClock
                             conn.Close();
                         }
                     }
-              //  }
             }
-
             strikeStartKeyboard = DateTime.Now;
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
@@ -156,8 +204,7 @@ namespace PunchClock
         private static extern bool UnhookWindowsHookEx(IntPtr hhk);
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode,
-            IntPtr wParam, IntPtr lParam);
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode,IntPtr wParam, IntPtr lParam);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr GetModuleHandle(string lpModuleName);
@@ -170,7 +217,10 @@ namespace PunchClock
         [DllImport("user32.dll")]
         static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
-        const int SW_HIDE = 0;
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+       
+       
         public static DateTime? GetLastLoginToMachine(string machineName, string userName)
         {
             string sKey = @"System\CurrentControlSet\Control\Windows";
@@ -192,7 +242,8 @@ namespace PunchClock
             }
             return result;
         }
-
+     
+        
         public static DateTime GetLastSystemShutdown()
         {
             string sKey = @"System\CurrentControlSet\Control\Windows";
