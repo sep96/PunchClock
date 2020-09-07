@@ -70,8 +70,11 @@ namespace PunchClock
 
         static void Main(string[] args)
         {
-          
 
+            if (!CheckDatabaseExcist())
+            {
+                GenerateDatabase();
+            }
             string MachineName1 = Environment.MachineName;
             userName = System.Security.Principal.WindowsIdentity.GetCurrent().Name.Split('\\')[1];
             GetLastLoginToMachine(MachineName1, userName);
@@ -95,6 +98,64 @@ namespace PunchClock
             UnhookWindowsHookEx(_hookID);
             UnhookWindowsHookEx(_hookID_);
             UpTime();
+            
+        }
+        private static bool CheckDatabaseExcist()
+        {
+            SqlConnection conn = new SqlConnection(connectionString);
+            try
+            {
+                conn.Open();
+                conn.Close();
+                return true;
+            }
+            catch(Exception ee)
+            {
+                return false;
+            }
+        }
+
+        private static void GenerateDatabase()
+        {
+            List<string> cmds = new List<string>();
+            if(File.Exists(Application.StartupPath + "\\script.sql"))
+            {
+                TextReader tr = new StreamReader(Application.StartupPath + "\\script.sql");
+                string line = "";
+                string cmd = "";
+                while((line = tr.ReadLine()) != null)
+                {
+                    if(line.Trim().ToUpper() == "GO")
+                    {
+                        cmds.Add(cmd);
+                        cmd = "";
+                    }
+                    else
+                    {
+                        cmd += line + "\r\n";
+                    }
+                }
+                if (cmd.Length > 0)
+                {
+                    cmds.Add(cmd);
+                    cmd = "";
+                }
+                tr.Close();
+                if(cmds.Count>0)
+                {
+                    using(SqlCommand comm = new SqlCommand())
+                    {
+                        comm.Connection = new SqlConnection("Data Source=.;Initial Catalog=master;Integrated Security=True");
+                        comm.CommandType = CommandType.Text;
+                        comm.Connection.Open();
+                        foreach(var cm in cmds)
+                        {
+                            comm.CommandText = cm;
+                            comm.ExecuteNonQuery();
+                        }
+                    }
+                }
+            }
         }
 
         private static void startupMaker()
