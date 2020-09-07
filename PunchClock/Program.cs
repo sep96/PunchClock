@@ -35,6 +35,7 @@ namespace PunchClock
         private static long strikeCount = 0;
         private static readonly string connectionString = "Data Source=.;Initial Catalog=PC;Integrated Security=True";
         private static string userName = "";
+        private static bool ok = false;
         const int SW_HIDE = 0;
 
 
@@ -77,7 +78,6 @@ namespace PunchClock
             }
             string MachineName1 = Environment.MachineName;
             userName = System.Security.Principal.WindowsIdentity.GetCurrent().Name.Split('\\')[1];
-            GetLastLoginToMachine(MachineName1, userName);
             WorkStart = DateTime.Now;
             var firstDayOfMonth = new DateTime(WorkStart.Year, WorkStart.Month, 1);
             var lastDayOfMonth = firstDayOfMonth.AddMonths(1).AddDays(-1);
@@ -93,7 +93,9 @@ namespace PunchClock
             ShowWindow(handle, SW_HIDE);
             _hookID = SetHook(_proc);
             _hookID_ = SetHook(_proc_);
-
+           
+            GetLastLoginToMachine(MachineName1, userName);
+        
             Application.Run();
             UnhookWindowsHookEx(_hookID);
             UnhookWindowsHookEx(_hookID_);
@@ -293,13 +295,37 @@ namespace PunchClock
             string query = " update  [PC].[dbo].[TimeRecorder] set [EndTime]=CONVERT(datetime,@end)  where CONVERT(DATE,[Start])=CONVERT(DATE,@end)";
             using (SqlConnection conn = new SqlConnection(connectionString))
             {
-                conn.Open();
-                using (SqlCommand comm = new SqlCommand(query, conn))
+                try
                 {
-                    comm.Parameters.AddWithValue("@end", result);
-                    comm.ExecuteNonQuery();
+                   
+                    conn.Open();
+
+                    using (SqlCommand comm = new SqlCommand(query, conn))
+                    {
+                        comm.Parameters.AddWithValue("@end", result);
+                        comm.ExecuteNonQuery();
+                    }
+                    conn.Close();
                 }
-                conn.Close();
+                catch
+                {
+                    while (!ok)
+                    {
+                        try
+                        {
+                            conn.Open();
+
+                            using (SqlCommand comm = new SqlCommand(query, conn))
+                            {
+                                comm.Parameters.AddWithValue("@end", result);
+                                comm.ExecuteNonQuery();
+                            }
+                            conn.Close();
+                            ok = true;
+                        }
+                        catch { }
+                    }
+                }
             }
             return result;
         }
